@@ -40,12 +40,14 @@ const stats = [
 ]
 
 type Row = Record<string, string | number | null>
+type RankItem = { 排名: number; 维度: string; 维度值: string; 贡献度: number }
 
 export default function DashboardView() {
   const [rows, setRows] = useState<Row[]>([])
   const [total, setTotal] = useState(0)
   const [errorMessage, setErrorMessage] = useState('')
   const [filters, setFilters] = useState<Record<string, string>>({})
+  const [selected, setSelected] = useState<Row | null>(null)
   const filterFields = useMemo(() => columns.slice(0, 3), [])
 
   const reload = useCallback(async () => {
@@ -75,10 +77,14 @@ export default function DashboardView() {
         method: 'POST',
         body: JSON.stringify({ action }),
       })
-      if (!response.ok) {
-        throw new Error('运营看板动作未生效，请稍后重试')
+      const payload = await response.json()
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.message || '运营看板动作未生效，请稍后重试')
       }
       await reload()
+      if (selected && selected.id === row.id) {
+        setSelected(payload.entry ?? row)
+      }
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : '运营看板操作失败')
     }
@@ -129,29 +135,70 @@ export default function DashboardView() {
         <thead>
           <tr>
             {columns.map((column) => <th key={column}>{column}</th>)}
+            <th>当前根因状态</th>
+            <th>告警线状态</th>
+            <th>关联归因</th>
             <th>可执行动作</th>
           </tr>
         </thead>
         <tbody>
           {rows.map((row) => (
-            <tr key={String(row.id)}>
+            <tr key={String(row.id)} className={selected && selected.id === row.id ? 'row-selected' : undefined}>
               {columns.map((column) => <td key={column}>{row[column] ?? '—'}</td>)}
+              <td>{row['当前根因状态'] ?? '—'}</td>
+              <td>{row['告警线状态'] ?? '—'}</td>
+              <td>{row['关联分析编号'] ?? '—'}</td>
               <td className="row-actions">
                 {actions.map((action) => (
                   <button key={action} className="link" type="button" onClick={() => void runAction(action, row)}>
                     {action}
                   </button>
                 ))}
+                <button className="link" type="button" onClick={() => void runAction('确认恢复', row)}>
+                  确认恢复
+                </button>
+                <button className="link" type="button" onClick={() => setSelected(row)}>
+                  关联明细
+                </button>
               </td>
             </tr>
           ))}
           {rows.length === 0 && (
             <tr>
-              <td className="empty-state" colSpan={columns.length + 1}>暂无运营看板数据，可先登记看板视图</td>
+              <td className="empty-state" colSpan={columns.length + 4}>暂无运营看板数据，可先登记看板视图</td>
             </tr>
           )}
         </tbody>
       </table>
+
+      {selected && (
+        <section className="detail-panel" data-testid="dashboard-detail">
+          <header className="detail-head">
+            <h3>{String(selected['视图编号'])} · 看板恢复观测与归因</h3>
+            <button className="btn ghost" type="button" onClick={() => setSelected(null)}>收起</button>
+          </header>
+          <div className="detail-grid">
+            <span>视图状态</span><strong>{String(selected['status'] ?? '—')}</strong>
+            <span>观测状态</span><strong>{String(selected['观测状态'] ?? '—')}</strong>
+            <span>当前根因</span><strong>{String(selected['当前根因'] ?? '—')}</strong>
+            <span>当前根因状态</span><strong>{String(selected['当前根因状态'] ?? '—')}</strong>
+            <span>指标观测值 / 告警线</span>
+            <strong>{String(selected['指标观测值'] ?? '—')} / {String(selected['告警线'] ?? '—')}（{String(selected['告警线状态'] ?? '—')}）</strong>
+            <span>数据集 / 凭证</span>
+            <strong>{String(selected['数据集编号'] ?? '—')} / {String(selected['落库凭证'] ?? '—')}</strong>
+            <span>恢复确认时点</span><strong>{String(selected['恢复确认时点'] ?? '—')}</strong>
+          </div>
+          <h4>历史区（原告警时点排名）</h4>
+          <ul className="basis-list">
+            {(Array.isArray(selected['原告警贡献度排名']) ? selected['原告警贡献度排名'] as RankItem[] : []).map((rank) => (
+              <li key={`${rank.排名}-${rank.维度}`}>{rank.排名}. {rank.维度}：{rank.维度值} {rank.贡献度}%</li>
+            ))}
+            {(!Array.isArray(selected['原告警贡献度排名']) || (selected['原告警贡献度排名'] as RankItem[]).length === 0) && (
+              <li className="muted">暂无原告警时点排名</li>
+            )}
+          </ul>
+        </section>
+      )}
 
       <footer className="page-foot">
         <span>共 {total} 条运营看板记录</span>

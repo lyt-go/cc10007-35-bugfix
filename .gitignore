@@ -85,3 +85,9 @@ desktop.ini
 *.db
 *.pid
 *.seed
+
+# ===== 告警归因落库文件 =====
+var/
+backend/var/
+*.sqlite3-wal
+*.sqlite3-shm

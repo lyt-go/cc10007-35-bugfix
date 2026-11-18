@@ -75,5 +75,42 @@ npm run dev
 - 列表接口统一返回 `{ items, total, page, size }`，动作接口统一返回 `{ ok, message }`。
 - 状态流转只允许在 `app/services` 里改，路由层不做业务判断。
 
+## 告警恢复与归因数据集
+
+运营看板与指标归因通过一份指标告警记录（`metric_alerts`）共享状态，看板视图编号 ↔
+分析编号 ↔ 告警编号三者按数据字段关联，不靠行号猜测。
+
+- **状态机**：看板只能 `草稿 → 视图评审中 → 已发布 → 已下线`，归因只能
+  `草稿 → 分析中 → 已确认 → 已归档`；草稿不能跳过评审发布，也不能跳过分析直接确认。
+- **恢复传播**：指标观测值回到告警线内后，看板的“确认恢复”与归因关闭在同一个锁、
+  同一个确认时点完成；看板与归因两侧的当前根因状态始终一致。
+- **贡献度口径**：归因数据集从**最新异常批次**的波动指标事件重新计算维度贡献度，
+  原告警时点的排名只写入历史区（`/api/metricdrill/{id}/history`），不再作为当前排名。
+- **迟到告警裁决**：看板恢复观测与迟到告警落到同一指标时，按事件时点而不是到达顺序
+  裁决——事件时点早于恢复观测即为过期依据被覆盖；晚于恢复观测则根因从已关闭转
+  “观察中”。任何时刻只暴露一个当前根因状态。
+- **落库凭证**：关闭时先写 SQLite（数据集、维度事件、历史排名）再提交内存状态，
+  并发/重复关闭按幂等键只保留一条有效数据集；凭证可按
+  `/api/metricdrill/{id}/credential` 回读，服务重启后自动从库里恢复。
+
+相关接口：
+
+| 接口 | 说明 |
+| --- | --- |
+| `POST /api/dashboard/{id}/actions` `{"action":"确认恢复"}` | 看板恢复确认（触发归因同刻关闭） |
+| `POST /api/metricdrill/{id}/save-dataset` | 指标归因保存数据集并等待处理 |
+| `POST /api/metricdrill/{id}/close` | 关闭归因，返回数据集与落库凭证 |
+| `POST /api/metricdrill/{id}/late-alerts` | 补录迟到告警记录 |
+| `GET /api/metricdrill/{id}/dataset` | 告警归因明细数据集（含维度贡献度、状态依据） |
+| `GET /api/metricdrill/{id}/history` | 历史区（原告警时点排名等） |
+| `GET /api/metricdrill/{id}/credential` | 落库凭证 |
+| `GET /api/metricdrill/{id}/reconcile` | 看板/告警/归因/凭证对账单 |
+| `GET /api/dashboard/{id}/alerts` | 看板恢复观测与告警线状态 |
+
+落库目标由 `DATABASE_URL` / `STORAGE_TARGET` 配置，默认写到 `backend/var/incident_store.sqlite3`；
+联调环境把 `DATABASE_URL` 指向共享库即可，业务代码不用改。
+
+回归测试：`cd backend && .venv/bin/python -m unittest discover -s tests -v`。
+
 领域：数据工程
 子方向：数据分析与数据应用

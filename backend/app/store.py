@@ -4,9 +4,19 @@
 """
 from __future__ import annotations
 
+import threading
 from typing import Any
 
 from app.seed import SEED_ROWS
+
+# 告警归因用到的支撑表只服务于运营看板 / 指标归因，不作为独立业务模块展示在概览里。
+INTERNAL_TABLES = {
+    "metric_alerts",
+    "metric_alert_events",
+    "attribution_datasets",
+    "metric_alert_history",
+    "storage_credentials",
+}
 
 
 class Store:
@@ -14,9 +24,16 @@ class Store:
         self._tables: dict[str, list[dict[str, Any]]] = {
             name: [dict(row) for row in rows] for name, rows in SEED_ROWS.items()
         }
+        # 状态流转、数据集生成和落库凭证必须是一个事务：所有业务服务共用同一把可重入锁。
+        self.lock = threading.RLock()
 
     def module_names(self) -> list[str]:
-        return sorted(self._tables)
+        return sorted(name for name in self._tables if name not in INTERNAL_TABLES)
+
+    def next_id(self, module: str) -> int:
+        """在锁内分配自增主键；并发写同一张表时不会拿到重复 id。"""
+        rows = self.rows(module)
+        return max((int(row.get("id", 0)) for row in rows), default=0) + 1
 
     def rows(self, module: str) -> list[dict[str, Any]]:
         return self._tables.setdefault(module, [])
